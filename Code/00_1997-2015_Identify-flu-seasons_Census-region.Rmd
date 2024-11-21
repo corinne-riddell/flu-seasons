@@ -453,12 +453,14 @@ mw_plot <- ggplot(dat = Midwest_summary,
 
 mw_plot
 
-ggsave(plot = mw_plot, 
-       filename = here("Plots", "Midwest-seasons-9715_2023-03-10.png"),
-       width = 10, height = 2, device = "png")
+# ggsave(plot = mw_plot, 
+#        filename = here("Plots", "Midwest-seasons-9715_2023-03-10.png"),
+#        width = 10, height = 2, device = "png")
 ```
 
-
+```{r}
+write_csv(Midwest_summary, file = here("Data", "Midwest-weekly-smoothed.csv"))
+```
 
 ```{r south}
 division <- "South"
@@ -581,13 +583,13 @@ south_plot <- ggplot(dat = South_summary,
 
 south_plot
 
-ggsave(plot = south_plot, 
-       filename = here("Plots", "South-seasons-9715_2023-03-10.png"),
-       width = 10, height = 2, device = "png")
+# ggsave(plot = south_plot, 
+#        filename = here("Plots", "South-seasons-9715_2023-03-10.png"),
+#        width = 10, height = 2, device = "png")
 ```
 
 ```{r}
-write_csv(South_summary, file = here("flu-season-data", "South-weekly-smoothed.csv"))
+write_csv(South_summary, file = here("Data", "South-weekly-smoothed.csv"))
 ```
 
 
@@ -712,10 +714,16 @@ west_plot <- ggplot(dat = West_summary,
 
 west_plot
 
-ggsave(plot = west_plot, 
-       filename = here("Plots", "West-seasons-9715_2023-03-10.png"),
-       width = 10, height = 2, device = "png")
+# ggsave(plot = west_plot, 
+#        filename = here("Plots", "West-seasons-9715_2023-03-10.png"),
+#        width = 10, height = 2, device = "png")
 ```
+
+
+```{r}
+write_csv(West_summary, file = here("Data", "West-weekly-smoothed.csv"))
+```
+
 ```{r}
 all_CR_flu_season_dates <- 
 bind_rows(Northeast_flu_season_dates %>% mutate(Census_region = "Northeast", 
