@@ -135,7 +135,7 @@ Clinical_2015 %<>%
 #str(Clinical_2015$dt3)
 
 PH_2015 %<>% rename(num_test = `TOTAL SPECIMENS`) %>%
-  mutate(num_pos = `A (2009 H1N1)` + `A (H3)` + `A (Subtyping not Performed)` + 
+  mutate(num_pos = `A (2009 H1N1)` + `A (H3)` + `A (Subtyping not Performed)` +
            B + BVic + BYam + H3N2v,
          percent_pos = (num_pos/num_test)*100)
 
@@ -276,6 +276,21 @@ get(paste0(division, "_summary")) %>%
   summarise(num_weeks = n(),
             num_weeks_no_tests = sum(no_tests)) %>%
   mutate(prop_no_tests = round((num_weeks_no_tests/num_weeks)*100, 1))
+```
+
+
+```{r}
+#Plot of both types of tests
+
+ggplot(data = get(paste0(division, "_summary")), aes(x = dt3, y = num_test)) + 
+  geom_line(aes(col = "Clinical tests")) + 
+  geom_line(data = Northeast_summary2, aes(x = dt3, y = num_test, col = "PH tests")) +
+  labs(y = "Number of tests", x = "Year", 
+       title = paste("Number of clinical tests in ", division, " 2015+")) +
+  theme_bw() + 
+  scale_y_log10() + 
+  scale_x_date(date_breaks = "years", date_labels = "%y") 
+
 ```
 
 ```{r}
