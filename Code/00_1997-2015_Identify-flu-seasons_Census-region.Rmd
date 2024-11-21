@@ -131,8 +131,8 @@ dat_9715 %<>%
 
 #See this info for how to figure out what is the first week of the year
 #https://ndc.services.cdc.gov/wp-content/uploads/MMWR_Week_overview.pdf
-#if Jan 1 is S, M, Tu, or W, then the first week of the year begins on the sunday pf that week
-# If Jan 1 is Th, F, or S, then the first week of the year begins on the sunday of the following week
+#if Jan 1 is S, M, Tu, or W, then the first week of the year begins on the Sunday of that week
+# If Jan 1 is Th, F, or S, then the first week of the year begins on the Sunday of the following week
 
 
 dat_9715 %<>% mutate(no_tests = num_test == 0, 
@@ -144,7 +144,7 @@ dat_9715 %<>% arrange(YEAR, WEEK) %>% mutate(counter = row_number())
 
 #issue; there is less unique dt3 then there are combinations of WEEK*YEAR
 #this is because there are years where there are 53 weeks coded for that year and it ends up generating the same dt3 for the last week of the year and the first week of the next year
-#this is because the last week of one year and the first week of the next year are the same week! But somehow the CDC has different data for those eg look at counter =  141-149 and tge proceeding rows
+#this is because the last week of one year and the first week of the next year are the same week! But somehow the CDC has different data for those eg look at counter =  141-149 and the proceeding rows
 
 #add one fabricated test that is false (so add one to num test but nothing to num positive)
 dat_9715 %<>% mutate(num_test_p1 = num_test + 1)
@@ -162,6 +162,7 @@ dat2 <- dat_9715 %>% group_by(census_division, dt3) %>%
          no_tests = num_test == 0, 
          test_lt_100 = num_test < 100)
 ```
+
 ```{r}
 table(is.na(dat2$pp2)) 
 #206 are missing percent_pos info (0 tests with 0 positive results)
@@ -180,18 +181,21 @@ dat2 %>%
             Q3 = quantile(num_test, 0.75), 
             max = max(num_test))
 ```
+
 ```{r}
-dat2 %<>% ungroup() %>% rowwise() %>%
+dat2 %<>%
+  ungroup() %>% 
+  rowwise() %>%
   mutate(lb = ifelse(num_test == 0, 
-                0, 
-                binom.test(x = num_pos,
-                           n = num_test, 
-                           conf.level = 0.95)$conf.int[1]),
+                     0, 
+                     binom.test(x = num_pos,
+                                n = num_test, 
+                                conf.level = 0.95)$conf.int[1]),
          ub = ifelse(num_test == 0, 
-                1, 
-                binom.test(x = num_pos,
-                           n = num_test, 
-                           conf.level = 0.95)$conf.int[2]),
+                     1, 
+                     binom.test(x = num_pos,
+                                n = num_test, 
+                                conf.level = 0.95)$conf.int[2]),
          ub2 = case_when(ub > 0.65 ~ 0.65,
                          ub <= 0.65 ~ ub))
 ```
@@ -240,6 +244,7 @@ a + b + plot_layout(nrow = 2)
 ```
 
 ```{r}
+
 assign(paste0(division, "_mod0"),
        glm(num_pos ~ ns(dt3, df = 160), 
            offset = log(num_test_p1), #18 seasons with 10 df per season = 180
@@ -247,7 +252,7 @@ assign(paste0(division, "_mod0"),
 )
 
 Northeast_summary$p1 <- predict(Northeast_mod0, type = "response")
-No <- Northeast_summary$p1/Northeast_summary$num_test_p1
+Northeast_summary$p2 <- Northeast_summary$p1/Northeast_summary$num_test_p1
 
 ggplot(dat = get(paste0(division, "_summary")), aes(x = dt3, y = pp2)) + 
   scale_y_continuous(limits = c(-0.05, 0.65)) + 
@@ -299,7 +304,7 @@ mutate(last_end = lag(flu_season_end),
        time_since_last = flu_season_start - last_end)
 
 Northeast_flu_season_dates
-write_csv(Northeast_flu_season_dates, file = here("Data", "Northeast-flu-seasons-9715.csv"))
+#write_csv(Northeast_flu_season_dates, file = here("Data", "Northeast-flu-seasons-9715.csv"))
 ```
 
 ```{r, echo=F}
@@ -318,9 +323,13 @@ ne_plot <- ggplot(dat = Northeast_summary,
 
 ne_plot
 
-ggsave(plot = ne_plot, 
-       filename = here("Plots", "Northeast-seasons-9715_2023-03-10.png"),
-       width = 10, height = 2, device = "png")
+# ggsave(plot = ne_plot, 
+#        filename = here("Plots", "Northeast-seasons-9715_2023-03-10.png"),
+#        width = 10, height = 2, device = "png")
+```
+
+```{r}
+write_csv(Northeast_summary, file = here("Data", "Northeast-weekly-smoothed.csv"))
 ```
 
 ```{r midwest}
