@@ -1,0 +1,69 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-11-21"
+---
+
+```{r load-libraries, echo=F, message=F}
+library(tidyverse)
+library(magrittr)
+library(patchwork)
+library(RcppRoll)
+library(readxl)
+library(lubridate)
+library(scales)
+library(splines)
+library(here)
+```
+
+```{r}
+Northeast_summary_1 <- read_csv(file = here("Data", "Northeast-weekly-smoothed.csv"))
+Northeast_summary_2 <- read_csv(file = here("Data", "Northeast-weekly-smoothed-2.csv"))
+
+Northeast_summary <- bind_rows(Northeast_summary_1, Northeast_summary_2)
+
+Northeast_summary %<>% mutate(p2_check = case_when(dt3 < as.Date("2015-10-04") ~ p1/num_test_p1,
+                                               dt3 >= as.Date("2015-10-04") ~ p1/num_test),
+                              
+                              num_test_both = case_when(dt3 < as.Date("2015-10-04") ~ num_test_p1,
+                                               dt3 >= as.Date("2015-10-04") ~ num_test),
+                              
+                              diff = p2 - p2_check)
+
+South_summary_1 <- read_csv(file = here("Data", "South-weekly-smoothed.csv"))
+South_summary_2 <- read_csv(file = here("Data", "South-weekly-smoothed-2.csv"))
+
+South_summary <- bind_rows(South_summary_1, South_summary_2)
+
+South_summary %<>% mutate(p2_check = case_when(dt3 < as.Date("2015-10-04") ~ p1/num_test_p1,
+                                               dt3 >= as.Date("2015-10-04") ~ p1/num_test),
+                          num_test_both = case_when(dt3 < as.Date("2015-10-04") ~ num_test_p1,
+                                               dt3 >= as.Date("2015-10-04") ~ num_test),
+                          diff = p2 - p2_check)
+
+ggplot(South_summary, aes(x = dt3, y = diff)) + geom_line()
+min(South_summary$diff)
+max(South_summary$diff)
+South_summary %>% select(dt3, p2, p1, num_test, p2_check, diff) %>% View()
+
+
+
+Northeast_summary %<>% mutate(p2_check = p2/num_test)
+Northeast_summary %>% select(dt3, p2, p1, num_test, p2_check) %>% View()
+```
+
+```{r}
+NE <- Northeast_summary %>% select(dt3, p1, num_test_both) %>% mutate(region = "NE")
+South <- South_summary %>% select(dt3, p1, num_test_both) %>% mutate(region = "S")
+
+both <- bind_rows(NE, South)
+
+regions_wide <- both %>% pivot_wider(names_from = region, values_from = c(p1, num_test_both))
+
+
+#Continue this after talk to Britt
+#Add in the other regions
+regions_wide %<>% mutate(total_pos = p1_NE + p1_S,
+  total_tests = num_test_both_NE + num_test_both_S)
+```
+

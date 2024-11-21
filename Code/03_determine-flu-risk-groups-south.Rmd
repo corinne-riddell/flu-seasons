@@ -1,0 +1,159 @@
+---
+title: ""
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load-libraries, echo=F, message=F}
+library(tidyverse)
+library(magrittr)
+library(patchwork)
+library(RcppRoll)
+library(readxl)
+library(lubridate)
+library(scales)
+library(splines)
+library(here)
+```
+
+```{r}
+South_summary_1 <- read_csv(file = here("Data", "South-weekly-smoothed.csv"))
+South_summary_2 <- read_csv(file = here("Data", "South-weekly-smoothed-2.csv"))
+
+South_summary <- bind_rows(South_summary_1, South_summary_2)
+```
+
+```{r}
+South_summary %>% filter(start_flu_season ==1 | end_flu_season == 1) %>% 
+  filter(dt3 != (as.Date("2010-01-03")), dt3 != as.Date("2010-01-17")) %>%
+  summarise(max(p2, na.rm = T), min(p2, na.rm = T))
+
+South_summary %>% 
+  summarise(max(p2, na.rm = T), min(p2, na.rm = T))
+```
+
+```{r}
+South_summary %<>% mutate(month = month(dt3), 
+                          year = year(dt3))
+
+South_summary %>% filter(month == 7) %>% select(dt3, month, p2, p1, num_test) %>% View()
+ 
+South_summary %>% filter(month == 7) %>% summarise()
+
+ggplot(dat = South_summary %>% filter(year < 2021), 
+       aes(x = dt3, y = pp2)) + 
+  #geom_ribbon(aes(ymin = lb, ymax = ub2), alpha = 0.4) +
+  #geom_rect(aes(xmin = as.Date("1997-01-01"), xmax = as.Date("2021-01-01"), ymin = 0, ymax = 0.10), fill = "#fdae61", alpha = 0.7) +
+  #geom_rect(aes(xmin = as.Date("1997-01-01"), xmax = as.Date("2021-01-01"), ymin = 0.101, ymax = 0.25), fill = "#ffffbf", alpha = 0.7) +
+  #geom_rect(aes(xmin = as.Date("1997-01-01"), xmax = as.Date("2021-01-01"), ymin = 0.251, ymax = 0.40), fill = "#a6d96a", alpha = 0.7) +
+  scale_y_continuous(limits = c(-0.05, 0.40)) + 
+  geom_line(aes(y = p2), col = "#7a0177") + 
+  geom_line(col = "#fd8d3c") + 
+  geom_hline(yintercept = 0.05) + 
+  labs(y = "% positive flu tests", x = "Year") +
+  theme_bw() + labs(title = "South") +
+  #geom_vline(data = South_flu_season_dates, aes(xintercept = flu_season_end), col = "red") + 
+  #geom_vline(data = South_flu_season_dates, aes(xintercept = flu_season_start), col = "green") +
+  scale_x_date(date_breaks = "months", date_labels = "%m") +
+  facet_wrap(~year, scales = "free_x")
+
+south_plot <- ggplot(dat = South_summary %>% filter(dt3 < as.Date("2020-07-01")), 
+       aes(x = dt3, y = pp2)) + 
+  #geom_ribbon(aes(ymin = lb, ymax = ub2), alpha = 0.4) +
+  geom_rect(aes(xmin = as.Date("1997-01-01"), xmax = as.Date("2021-01-01"), ymin = 0, ymax = 0.10), fill = "#fdae61", alpha = 0.7) +
+  geom_rect(aes(xmin = as.Date("1997-01-01"), xmax = as.Date("2021-01-01"), ymin = 0.101, ymax = 0.25), fill = "#ffffbf", alpha = 0.7) +
+  geom_rect(aes(xmin = as.Date("1997-01-01"), xmax = as.Date("2021-01-01"), ymin = 0.251, ymax = 0.40), fill = "#a6d96a", alpha = 0.7) +
+  scale_y_continuous(limits = c(-0.05, 0.40)) + 
+  geom_line(aes(y = p2), col = "#7a0177") + 
+  geom_line(col = "#fd8d3c") + 
+  geom_hline(yintercept = 0.05) + 
+  labs(y = "% positive flu tests", x = "Year") +
+  theme_bw() + labs(title = "South") +
+  #geom_vline(data = South_flu_season_dates, aes(xintercept = flu_season_end), col = "red") + 
+  #geom_vline(data = South_flu_season_dates, aes(xintercept = flu_season_start), col = "green") +
+  scale_x_date(date_breaks = "years", date_labels = "%y") 
+south_plot
+ggsave(filename = here("flu-season-data", "south-plot-risk-groups.png"), device = "png", dpi = 300, width = 20, height= 5, plot = south_plot)
+```
+
+```{r}
+South_summary %>% head()
+
+South_summary2 <- South_summary %>% 
+  filter(dt3 < as.Date("2020-07-01")) %>%
+  group_by(month) %>%
+  summarise(sum_p1 = sum(p1),
+            sum_tests = sum(num_test),
+            agg_p2 = sum_p1/sum_tests)
+  
+ggplot(South_summary2, aes( x= month, y = agg_p2)) + 
+  geom_line() + 
+  geom_point() + 
+  theme_bw() +
+  scale_x_continuous(breaks = 1:12) + 
+  geom_hline(yintercept = 0.05)
+
+
+South_summary3 <- South_summary %>% 
+  filter(dt3 < as.Date("2020-07-01") & year != 2009) %>%
+  group_by(month) %>%
+  summarise(sum_p1 = sum(p1),
+            sum_tests = sum(num_test),
+            agg_p2 = sum_p1/sum_tests)
+
+South_summary3 %<>% mutate(oct_first = as.numeric(factor(month, levels = c(10, 11, 12, 1:9))))
+
+ggplot(South_summary3, aes( x= oct_first, y = agg_p2)) + 
+  geom_rect(aes(xmin = 1, xmax = 12, ymin = 0, ymax = 0.11), fill = "#fdae61", alpha = 0.7) +
+  geom_rect(aes(xmin = 1, xmax = 12, ymin = 0.11, ymax = 0.199), fill = "#ffffbf", alpha = 0.7) +
+  geom_rect(aes(xmin = 1, xmax = 12, ymin = 0.2, ymax = 0.3), fill = "#a6d96a", alpha = 0.7) +
+  geom_point() + theme_bw() + geom_line() + 
+  # scale_x_continuous(breaks = c("10", "11", "12", "1", "2", "3", "4", "5",
+  #                               "6", "7", "8", "9"),
+  #                    labels = c("Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr",
+  #                               "May", "Jun", "Jul", "Aug", "Sep" )) + 
+  geom_hline(yintercept = 0.05) + geom_line() + labs(y = "average percent positive")
+
+
+
+```
+
+```{r}
+South_sum <- South_summary %>% select(dt3, WEEK, month, year, p2)
+
+South_sum %<>% mutate(flu_risk = case_when(p2 < 0.11 ~ "1: low",
+                                          p2 >= 0.11 & p2 < 0.20 ~ "2: med",
+                                          p2 >= 0.20 ~ "3: high"))
+
+table(South_sum$flu_risk)
+```
+
+```{r}
+south_plot2 <- ggplot(dat = South_sum %>% filter(dt3 < as.Date("2020-07-01")), 
+       aes(x = dt3, y = p2)) + 
+  #geom_ribbon(aes(ymin = lb, ymax = ub2), alpha = 0.4) +
+  #geom_rect(aes(xmin = as.Date("1997-01-01"), xmax = as.Date("2021-01-01"), ymin = 0, ymax = 0.10), fill = "#fdae61", alpha = 0.7) +
+  #geom_rect(aes(xmin = as.Date("1997-01-01"), xmax = as.Date("2021-01-01"), ymin = 0.101, ymax = 0.25), fill = "#ffffbf", alpha = 0.7) +
+  #geom_rect(aes(xmin = as.Date("1997-01-01"), xmax = as.Date("2021-01-01"), ymin = 0.251, ymax = 0.40), fill = "#a6d96a", alpha = 0.7) +
+  scale_y_continuous(limits = c(-0.05, 0.40)) + 
+  geom_line(col = "grey") + 
+  geom_point(aes(col = flu_risk)) +
+  #geom_line(col = "#fd8d3c") + 
+  geom_hline(yintercept = 0.11) + 
+  geom_hline(yintercept = 0.20) + 
+  labs(y = "% positive flu tests", x = "Year") +
+  theme_bw() + labs(title = "South") +
+  #geom_vline(data = South_flu_season_dates, aes(xintercept = flu_season_end), col = "red") + 
+  #geom_vline(data = South_flu_season_dates, aes(xintercept = flu_season_start), col = "green") +
+  scale_x_date(date_breaks = "years", date_labels = "%y") +
+  scale_color_manual(values = c("#4d9221","grey", "#c51b7d" ))
+south_plot2
+
+ggsave(filename = here("flu-season-data", "south-plot-risk-groups-2.png"), device = "png", dpi = 300, width = 20, height= 5, plot = south_plot2)
+```
+
+```{r}
+write_csv(South_sum, file = here("flu-season-data", "south-risk-groups-weekly.csv"))
+```
+
