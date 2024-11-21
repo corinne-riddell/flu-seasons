@@ -1,0 +1,826 @@
+---
+title: "All HHS: Define flu seasons for 2015 to 2021 by Census Region"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load-libraries, echo=F, message=F}
+library(tidyverse)
+library(magrittr)
+library(patchwork)
+library(RcppRoll)
+library(readxl)
+library(lubridate)
+library(scales)
+library(splines)
+library(here)
+```
+
+```{r define-census-regions, echo=F}
+ne_states <- c("Connecticut", "Maine", "Massachusetts", "New Hampshire", 
+                 "Rhode Island", "Vermont", "New Jersey", "New York", "Pennsylvania")
+
+mw_states <- c("Illinois", "Indiana", "Michigan", "Minnesota", "Ohio", 
+               "Wisconsin","North Dakota", "South Dakota",
+               "Iowa", "Kansas", "Missouri", "Nebraska")
+
+s_states <- c("Delaware", "District of Columbia", "Maryland",  
+                 "Virginia", "West Virginia",
+              "Tennessee", "Kentucky", "Mississippi", "Alabama",
+                       "Florida", "Georgia", "North Carolina", "South Carolina",
+              "Arkansas", "Louisiana", "Oklahoma", "Texas")
+
+w_states <- c("Colorado", "Montana",  "Utah", 
+                 "Wyoming", "New Mexico",
+              "Arizona", "California", "Hawaii", "Nevada",
+              "Alaska", "Idaho", "Oregon", "Washington")
+```
+
+## Overview
+
+Our goal is to identify the weeks defining the start and end dates of season 
+circulating Influenza separately for each Census region. 
+
+## Data
+
+These data were sent by NREVSS to Pingsheng in response to a data request. A
+couple files were sent and CR added a readme file to her copy of the data with 
+more information. Briefly, for years 2015 and later, the public health and 
+clinical lab data is delineated across two files. However,
+the public health data is only for a state-season (rather than a state-week) and 
+cannot be used to identify flu season start and end dates. This file starts with the
+2015-2016 season and uses data as recent as week 40 of 2021.
+
+```{r import-data, echo = F, message=F}
+
+Clinical_2015 <- read_csv(here("Data", "raw", "WHO_NREVSS_Clinical_Labs_By-Census-division.csv"), 
+                          skip = 1, 
+                          na = "X")
+
+PH_2015 <- read_csv(here("Data", "raw", "WHO_NREVSS_Public_Health_Labs_By-Census-division.csv"), 
+                          skip = 1, 
+                          na = "X")
+names(Clinical_2015)
+names(PH_2015)
+
+Clinical_2015 %<>% filter(YEAR < 2022)
+PH_2015 %<>% filter(YEAR < 2022)
+```
+
+```{r define-census-region, echo = F, message=F}
+Clinical_2015 %<>% mutate(census_division = case_when(REGION %in% c("Mid-Atlantic", "New England") ~ "Northeast",
+                                                      REGION %in% c("East South Central", "South Atlantic",
+                                                                    "West South Central") ~ "South",
+                                                      REGION %in% c("West North Central", "East North Central") ~ "Midwest",
+                                                      REGION %in% c("Pacific", "Mountain") ~ "West"))
+
+table(is.na(Clinical_2015$census_division))
+table(Clinical_2015$census_division, Clinical_2015$REGION)
+
+PH_2015 %<>% mutate(census_division = case_when(REGION %in% c("Mid-Atlantic", "New England") ~ "Northeast",
+                                                REGION %in% c("East South Central", "South Atlantic",
+                                                              "West South Central") ~ "South",
+                                                REGION %in% c("West North Central", "East North Central") ~ "Midwest",
+                                                REGION %in% c("Pacific", "Mountain") ~ "West"))
+
+table(is.na(PH_2015$census_division))
+table(PH_2015$census_division, PH_2015$REGION)
+```
+
+```{r tidy-data-and-make-subsets, echo=F}
+Clinical_2015 %<>% mutate(states = case_when(census_division == "Northeast" ~ paste(ne_states, collapse = ', '),
+                                        census_division == "South" ~ paste(s_states, collapse = ', '),
+                                        census_division == "Midwest" ~ paste(mw_states, collapse = ', '),
+                                        census_division == "West" ~ paste(w_states, collapse = ', ')
+                                        ))
+
+PH_2015 %<>% mutate(states = case_when(census_division == "Northeast" ~ paste(ne_states, collapse = ', '),
+                                        census_division == "South" ~ paste(s_states, collapse = ', '),
+                                        census_division == "Midwest" ~ paste(mw_states, collapse = ', '),
+                                        census_division == "West" ~ paste(w_states, collapse = ', ')
+                                        ))
+```
+
+```{r, echo=F}
+Clinical_2015 %<>% rename(num_test = `TOTAL SPECIMENS`,
+                          num_pos_A = `TOTAL A`,
+                          num_pos_B = `TOTAL B`,
+                          percent_pos = `PERCENT POSITIVE`,
+                          percent_pos_A = `PERCENT A`,
+                          percent_pos_B = `PERCENT B`)
+
+Clinical_2015 %<>% mutate(num_pos = num_pos_A + num_pos_B)
+
+# add Sunday date for each week of the year
+
+Clinical_2015 %<>% 
+  mutate(dt = ymd(paste0(YEAR, "-01-01")), #start by appending the year only
+         dt2 = dt + dweeks(WEEK - 1), #then add in the week info
+         dt3 = case_when(YEAR == 2015 ~ dt2 + ddays(3), #Sunday is a Th, add days to get to first week 
+                         YEAR == 2016 ~ dt2 + ddays(2),
+                         YEAR == 2017 ~ dt2 - ddays(0),
+                         YEAR == 2018 ~ dt2 - ddays(1),
+                         YEAR == 2019 ~ dt2 - ddays(2),
+                         YEAR == 2020 ~ dt2 - ddays(3),
+                         YEAR == 2021 ~ dt2 + ddays(2)
+                         )
+         )
+
+#See this info for how to figure out what is the first week of the year
+#https://ndc.services.cdc.gov/wp-content/uploads/MMWR_Week_overview.pdf
+#if Jan 1 is S, M, Tu, or W, then the first week of the year begins on the sunday pf that week
+# If Jan 1 is Th, F, or S, then the first week of the year begins on the sunday of the following week
+
+#str(Clinical_2015$dt3)
+
+PH_2015 %<>% rename(num_test = `TOTAL SPECIMENS`) %>%
+  mutate(num_pos = `A (2009 H1N1)` + `A (H3)` + `A (Subtyping not Performed)` + 
+           B + BVic + BYam + H3N2v,
+         percent_pos = (num_pos/num_test)*100)
+
+# add Sunday date for each week of the year
+PH_2015 %<>% 
+  mutate(dt = ymd(paste0(YEAR, "-01-01")), #start by appending the year only
+         dt2 = dt + dweeks(WEEK - 1), #then add in the week info
+         dt3 = case_when(YEAR == 2015 ~ dt2 + ddays(3), #Sunday is a Th, add days to get to first week 
+                         YEAR == 2016 ~ dt2 + ddays(2),
+                         YEAR == 2017 ~ dt2 - ddays(0),
+                         YEAR == 2018 ~ dt2 - ddays(1),
+                         YEAR == 2019 ~ dt2 - ddays(2),
+                         YEAR == 2020 ~ dt2 - ddays(3),
+                         YEAR == 2021 ~ dt2 + ddays(2)
+                         )
+         )
+```
+
+
+```{r}
+Clinical_2015 %<>% mutate(no_tests = num_test == 0, 
+                     test_lt_100 = num_test < 100)
+
+Clinical_2015 %<>% arrange(YEAR, WEEK) %>% mutate(counter = row_number())
+
+Clinical_2015 %<>% mutate(num_test_p1 = num_test + 1)
+
+PH_2015 %<>% mutate(no_tests = num_test == 0, 
+                     test_lt_100 = num_test < 100)
+
+PH_2015 %<>% arrange(YEAR, WEEK) %>% mutate(counter = row_number())
+
+PH_2015 %<>% mutate(num_test_p1 = num_test + 1)
+
+```
+
+```{r}
+C2 <- Clinical_2015 %>% group_by(census_division, dt3) %>% 
+  summarise(states = first(states),
+            YEAR = first(YEAR),
+            WEEK = first(WEEK),
+            num_test = sum(num_test),
+            num_pos = sum(num_pos)) %>%
+  mutate(pp2 = num_pos/num_test,
+         num_test_p1 = num_test + 1,
+         no_tests = num_test == 0, 
+         test_lt_100 = num_test < 100)
+
+P2 <- PH_2015 %>% group_by(census_division, dt3) %>% 
+  summarise(states = first(states),
+            YEAR = first(YEAR),
+            WEEK = first(WEEK),
+            num_test = sum(num_test),
+            num_pos = sum(num_pos)) %>%
+  mutate(pp2 = num_pos/num_test,
+         num_test_p1 = num_test + 1,
+         no_tests = num_test == 0, 
+         test_lt_100 = num_test < 100)
+```
+
+```{r}
+table(is.na(C2$pp2)) 
+table(is.na(P2$pp2)) 
+#none are missing percent_pos info (0 tests with 0 positive results)
+```
+
+Summary of the number of tests by Census region -- want to make sure data isn't
+too noisy for any division.
+
+```{r}
+#six number summary of the number of tests per HHS region over time
+C2 %>% 
+  group_by(census_division) %>%
+  summarise(min = min(num_test), 
+            Q1 = quantile(num_test, 0.25),
+            mean = mean(num_test),
+            med = median(num_test),
+            Q3 = quantile(num_test, 0.75), 
+            max = max(num_test))
+
+P2 %>% 
+  group_by(census_division) %>%
+  summarise(min = min(num_test), 
+            Q1 = quantile(num_test, 0.25),
+            mean = mean(num_test),
+            med = median(num_test),
+            Q3 = quantile(num_test, 0.75), 
+            max = max(num_test))
+```
+
+```{r}
+C2 %<>% ungroup() %>% rowwise() %>%
+  mutate(lb = ifelse(num_test == 0, 
+                0, 
+                binom.test(x = num_pos,
+                           n = num_test, 
+                           conf.level = 0.95)$conf.int[1]),
+         ub = ifelse(num_test == 0, 
+                1, 
+                binom.test(x = num_pos,
+                           n = num_test, 
+                           conf.level = 0.95)$conf.int[2]),
+         ub2 = case_when(ub > 0.65 ~ 0.65,
+                         ub <= 0.65 ~ ub))
+
+P2 %<>% ungroup() %>% rowwise() %>%
+  mutate(lb = ifelse(num_test == 0, 
+                0, 
+                binom.test(x = num_pos,
+                           n = num_test, 
+                           conf.level = 0.95)$conf.int[1]),
+         ub = ifelse(num_test == 0, 
+                1, 
+                binom.test(x = num_pos,
+                           n = num_test, 
+                           conf.level = 0.95)$conf.int[2]),
+         ub2 = case_when(ub > 0.65 ~ 0.65,
+                         ub <= 0.65 ~ ub))
+```
+
+```{r northeast}
+division <- "Northeast"
+```
+
+`r division`
+
+```{r}
+assign(paste0(division, "_summary"), C2 %>% filter(census_division == division))
+
+assign(paste0(division, "_summary2"), P2 %>% filter(census_division == division))
+```
+
+Proportion of the weeks in a calendar year with no tests
+
+```{r}
+get(paste0(division, "_summary")) %>% 
+  group_by(YEAR) %>%
+  summarise(num_weeks = n(),
+            num_weeks_no_tests = sum(no_tests)) %>%
+  mutate(prop_no_tests = round((num_weeks_no_tests/num_weeks)*100, 1))
+```
+
+```{r}
+a <- ggplot(data = get(paste0(division, "_summary")), aes(x = dt3, y = num_test)) + 
+  geom_line() + 
+  labs(y = "Number of tests", x = "Year", 
+       title = paste("Number of clinical tests in ", division, " 2015+")) +
+  theme_bw() + 
+  scale_y_log10() + 
+  scale_x_date(date_breaks = "years", date_labels = "%y") 
+
+b <- ggplot(dat = get(paste0(division, "_summary")), aes(x = dt3, y = pp2)) + 
+  geom_ribbon(aes(ymin = lb, ymax = ub2, fill = "95% CI")) +
+  geom_line(col = "#7a0177") + 
+  geom_hline(yintercept = 0.05) + 
+  labs(y = "Percentage tests that are positive", x = "Year") +
+  theme_bw() + 
+  scale_x_date(date_breaks = "years", date_labels = "%y") + 
+  scale_fill_manual(values = c("#bdbdbd")) +
+  scale_y_continuous(limits = c(0, 0.65))
+
+a + b + plot_layout(nrow = 2)
+```
+
+```{r}
+assign(paste0(division, "_mod0"),
+       glm(num_pos ~ ns(dt3, df = 72), 
+           offset = log(num_test),
+           data = get(paste0(division, "_summary")), family = "poisson")
+)
+
+Northeast_summary$p1 <- predict(Northeast_mod0, type = "response")
+Northeast_summary$p2 <- Northeast_summary$p1/Northeast_summary$num_test
+
+ggplot(dat = get(paste0(division, "_summary")), aes(x = dt3, y = pp2)) + 
+  scale_y_continuous(limits = c(-0.05, 0.65)) + 
+  geom_line(aes(y = p2), lwd = 1, col = "#fd8d3c") + 
+  geom_line(col = "#7a0177") +
+  geom_hline(yintercept = 0.05) +
+  labs(y = "Percentage tests that are positive", x = "Date") +
+  theme_bw() + labs(title = paste0(division, ": Actual vs. smoothed (df = 72)")) +
+  scale_x_date(date_breaks = "years", date_labels = "%y")
+```
+
+**Identify flu season start and end date for HHS region 1**
+
+```{r, echo = F}
+Northeast_summary %<>% 
+  ungroup() %>% 
+  arrange(dt3) %>%
+  mutate(gte5 = case_when(p2 >= 0.05 ~ 1, 
+                          p2 < 0.05 ~ 0),
+         diff_lag1_pp = gte5 - lag(gte5),
+         diff_lag2_pp = gte5 - lag(gte5, n = 2),
+         runsum = RcppRoll::roll_sum(diff_lag2_pp, 2, align = "right", fill = NA),
+         start_flu_season = case_when(runsum == 2 ~ 1,
+                                      runsum != 2 ~ 0),
+         end_flu_season = case_when(runsum == -2 ~ 1,
+                                    runsum != -2 ~ 0))
+```
+
+```{r, echo = F}
+Northeast_flu_season_start <- Northeast_summary %>% filter(start_flu_season == 1) %>% select(dt3)
+dim(Northeast_flu_season_start) #6
+
+Northeast_flu_season_end <- Northeast_summary %>% filter(end_flu_season == 1) %>% select(dt3)
+dim(Northeast_flu_season_end) #5
+
+Northeast_flu_season_dates <- cbind(Northeast_flu_season_start,
+                                    rbind(Northeast_flu_season_end, NA))
+
+names(Northeast_flu_season_dates) <- c("flu_season_start", "flu_season_end")
+
+Northeast_flu_season_dates %<>% filter(! year(flu_season_start) == 2021)
+
+```
+
+**List of flu season dates**
+
+```{r, echo=F}
+Northeast_flu_season_dates %<>% 
+mutate(last_end = lag(flu_season_end),
+       season_length = flu_season_end - flu_season_start,
+       time_since_last = flu_season_start - last_end)
+
+Northeast_flu_season_dates
+#write_csv(Northeast_flu_season_dates, file = here("Data", "Northeast-flu-seasons-1521.csv"))
+```
+
+```{r, echo=F}
+ne_plot2 <- ggplot(dat = Northeast_summary, 
+       aes(x = dt3, y = pp2)) + 
+  geom_ribbon(aes(ymin = lb, ymax = ub2), alpha = 0.4) +
+  scale_y_continuous(limits = c(-0.05, 0.65)) + 
+  geom_line(aes(y = p2), col = "#7a0177") + 
+  geom_line(col = "#fd8d3c") + 
+  geom_hline(yintercept = 0.05) + 
+  labs(y = "% positive flu tests", x = "Year") +
+  theme_bw() + labs(title = "Northeast") +
+  geom_vline(data = Northeast_flu_season_dates, aes(xintercept = flu_season_end), col = "red") + 
+  geom_vline(data = Northeast_flu_season_dates, aes(xintercept = flu_season_start), col = "green") +
+  scale_x_date(date_breaks = "years", date_labels = "%y")
+
+ne_plot2
+
+# ggsave(plot = ne_plot2, 
+#        filename = here("Plots", "Northeast-seasons-1521_2023-03-10.png"),
+#        width = 5, height = 2, device = "png")
+```
+
+```{r}
+write_csv(Northeast_summary, file = here("Data", "Northeast-weekly-smoothed-2.csv"))
+```
+
+```{r midwest}
+division <- "Midwest"
+```
+
+`r division`
+
+```{r}
+assign(paste0(division, "_summary"), C2 %>% filter(census_division == division))
+
+assign(paste0(division, "_summary2"), P2 %>% filter(census_division == division))
+```
+
+Proportion of the weeks in a calendar year with no tests
+
+```{r}
+get(paste0(division, "_summary")) %>% 
+  group_by(YEAR) %>%
+  summarise(num_weeks = n(),
+            num_weeks_no_tests = sum(no_tests)) %>%
+  mutate(prop_no_tests = round((num_weeks_no_tests/num_weeks)*100, 1))
+```
+
+```{r}
+a <- ggplot(data = get(paste0(division, "_summary")), aes(x = dt3, y = num_test)) + 
+  geom_line() + 
+  labs(y = "Number of tests", x = "Year", 
+       title = paste("Number of clinical tests in ", division, " 2015+")) +
+  theme_bw() + 
+  scale_y_log10() + 
+  scale_x_date(date_breaks = "years", date_labels = "%y") 
+
+b <- ggplot(dat = get(paste0(division, "_summary")), aes(x = dt3, y = pp2)) + 
+  geom_ribbon(aes(ymin = lb, ymax = ub2, fill = "95% CI")) +
+  geom_line(col = "#7a0177") + 
+  geom_hline(yintercept = 0.05) + 
+  labs(y = "Percentage tests that are positive", x = "Year") +
+  theme_bw() + 
+  scale_x_date(date_breaks = "years", date_labels = "%y") + 
+  scale_fill_manual(values = c("#bdbdbd")) +
+  scale_y_continuous(limits = c(0, 0.65))
+
+a + b + plot_layout(nrow = 2)
+```
+
+```{r}
+assign(paste0(division, "_mod0"),
+       glm(num_pos ~ ns(dt3, df = 72), 
+           offset = log(num_test),
+           data = get(paste0(division, "_summary")), family = "poisson")
+)
+
+Midwest_summary$p1 <- predict(Midwest_mod0, type = "response")
+Midwest_summary$p2 <- Midwest_summary$p1/Midwest_summary$num_test
+
+ggplot(dat = get(paste0(division, "_summary")), aes(x = dt3, y = pp2)) + 
+  scale_y_continuous(limits = c(-0.05, 0.65)) + 
+  geom_line(aes(y = p2), lwd = 1, col = "#fd8d3c") + 
+  geom_line(col = "#7a0177") +
+  geom_hline(yintercept = 0.05) +
+  labs(y = "Percentage tests that are positive", x = "Date") +
+  theme_bw() + labs(title = paste0(division, ": Actual vs. smoothed (df = 72)")) +
+  scale_x_date(date_breaks = "years", date_labels = "%y")
+```
+
+**Identify flu season start and end date for Midwest region 1**
+
+```{r, echo = F}
+Midwest_summary %<>% 
+  ungroup() %>% 
+  arrange(dt3) %>%
+  mutate(gte5 = case_when(p2 >= 0.05 ~ 1, 
+                          p2 < 0.05 ~ 0),
+         diff_lag1_pp = gte5 - lag(gte5),
+         diff_lag2_pp = gte5 - lag(gte5, n = 2),
+         runsum = RcppRoll::roll_sum(diff_lag2_pp, 2, align = "right", fill = NA),
+         start_flu_season = case_when(runsum == 2 ~ 1,
+                                      runsum != 2 ~ 0),
+         end_flu_season = case_when(runsum == -2 ~ 1,
+                                    runsum != -2 ~ 0))
+```
+
+```{r make-dataset-of-flu-dates, echo = F}
+Midwest_flu_season_start <- Midwest_summary %>% filter(start_flu_season == 1) %>% select(dt3)
+dim(Midwest_flu_season_start) #6
+
+Midwest_flu_season_end <- Midwest_summary %>% filter(end_flu_season == 1) %>% select(dt3)
+dim(Midwest_flu_season_end) #5
+
+Midwest_flu_season_dates <- cbind(Midwest_flu_season_start,
+                                    rbind(Midwest_flu_season_end, NA))
+
+names(Midwest_flu_season_dates) <- c("flu_season_start", "flu_season_end")
+
+#remove the last "season" since don't have the 2022 data so don't want to capture this as ending
+Midwest_flu_season_dates %<>% filter(! year(flu_season_start) == 2021)
+```
+
+**List of flu season dates**
+
+```{r, echo=F}
+Midwest_flu_season_dates %<>% 
+mutate(last_end = lag(flu_season_end),
+       season_length = flu_season_end - flu_season_start,
+       time_since_last = flu_season_start - last_end)
+
+Midwest_flu_season_dates
+write_csv(Midwest_flu_season_dates, file = here("Data", "Midwest-flu-seasons-1521.csv"))
+```
+
+```{r, echo=F}
+mw_plot2 <- ggplot(dat = Midwest_summary, 
+       aes(x = dt3, y = pp2)) + 
+  geom_ribbon(aes(ymin = lb, ymax = ub2), alpha = 0.4) +
+  scale_y_continuous(limits = c(-0.05, 0.65)) + 
+  geom_line(aes(y = p2), col = "#7a0177") + 
+  geom_line(col = "#fd8d3c") + 
+  geom_hline(yintercept = 0.05) + 
+  labs(y = "% positive flu tests", x = "Year") +
+  theme_bw() + labs(title = "Midwest") +
+  geom_vline(data = Midwest_flu_season_dates, aes(xintercept = flu_season_end), col = "red") + 
+  geom_vline(data = Midwest_flu_season_dates, aes(xintercept = flu_season_start), col = "green") +
+  scale_x_date(date_breaks = "years", date_labels = "%y")
+
+mw_plot2
+
+# ggsave(plot = mw_plot2, 
+#        filename = here("Plots", "Midwest-seasons-1521_2023-03-10.png"),
+#        width = 5, height = 2, device = "png")
+```
+
+```{r}
+write_csv(Midwest_summary, file = here("Data", "Midwest-weekly-smoothed-2.csv"))
+```
+
+```{r south}
+division <- "South"
+```
+
+`r division`
+
+```{r}
+assign(paste0(division, "_summary"), C2 %>% filter(census_division == division))
+
+assign(paste0(division, "_summary2"), P2 %>% filter(census_division == division))
+```
+
+Proportion of the weeks in a calendar year with no tests
+
+```{r}
+get(paste0(division, "_summary")) %>% 
+  group_by(YEAR) %>%
+  summarise(num_weeks = n(),
+            num_weeks_no_tests = sum(no_tests)) %>%
+  mutate(prop_no_tests = round((num_weeks_no_tests/num_weeks)*100, 1))
+```
+
+```{r}
+a <- ggplot(data = get(paste0(division, "_summary")), aes(x = dt3, y = num_test)) + 
+  geom_line() + 
+  labs(y = "Number of tests", x = "Year", 
+       title = paste("Number of clinical tests in ", division, " 2015+")) +
+  theme_bw() + 
+  scale_y_log10() + 
+  scale_x_date(date_breaks = "years", date_labels = "%y") 
+
+b <- ggplot(dat = get(paste0(division, "_summary")), aes(x = dt3, y = pp2)) + 
+  geom_ribbon(aes(ymin = lb, ymax = ub2, fill = "95% CI")) +
+  geom_line(col = "#7a0177") + 
+  geom_hline(yintercept = 0.05) + 
+  labs(y = "Percentage tests that are positive", x = "Year") +
+  theme_bw() + 
+  scale_x_date(date_breaks = "years", date_labels = "%y") + 
+  scale_fill_manual(values = c("#bdbdbd")) +
+  scale_y_continuous(limits = c(0, 0.65))
+
+a + b + plot_layout(nrow = 2)
+```
+
+```{r}
+assign(paste0(division, "_mod0"),
+       glm(num_pos ~ ns(dt3, df = 72), 
+           offset = log(num_test),
+           data = get(paste0(division, "_summary")), family = "poisson")
+)
+
+South_summary$p1 <- predict(South_mod0, type = "response")
+South_summary$p2 <- South_summary$p1/South_summary$num_test
+
+ggplot(dat = get(paste0(division, "_summary")), aes(x = dt3, y = pp2)) + 
+  scale_y_continuous(limits = c(-0.05, 0.65)) + 
+  geom_line(aes(y = p2), lwd = 1, col = "#fd8d3c") + 
+  geom_line(col = "#7a0177") +
+  geom_hline(yintercept = 0.05) +
+  labs(y = "Percentage tests that are positive", x = "Date") +
+  theme_bw() + labs(title = paste0(division, ": Actual vs. smoothed (df = 72)")) +
+  scale_x_date(date_breaks = "years", date_labels = "%y")
+```
+
+**Identify flu season start and end date for South region 1**
+
+```{r, echo = F}
+South_summary %<>% 
+  ungroup() %>% 
+  arrange(dt3) %>%
+  mutate(gte5 = case_when(p2 >= 0.05 ~ 1, 
+                          p2 < 0.05 ~ 0),
+         diff_lag1_pp = gte5 - lag(gte5),
+         diff_lag2_pp = gte5 - lag(gte5, n = 2),
+         runsum = RcppRoll::roll_sum(diff_lag2_pp, 2, align = "right", fill = NA),
+         start_flu_season = case_when(runsum == 2 ~ 1,
+                                      runsum != 2 ~ 0),
+         end_flu_season = case_when(runsum == -2 ~ 1,
+                                    runsum != -2 ~ 0))
+```
+
+```{r, echo = F}
+South_flu_season_start <- South_summary %>% filter(start_flu_season == 1) %>% select(dt3)
+dim(South_flu_season_start) #7
+
+South_flu_season_end <- South_summary %>% filter(end_flu_season == 1) %>% select(dt3)
+dim(South_flu_season_end) #7
+
+South_flu_season_dates <- cbind(South_flu_season_start,
+                                    rbind(South_flu_season_end))
+
+names(South_flu_season_dates) <- c("flu_season_start", "flu_season_end")
+
+#remove the last "season" since don't have the 2022 data so don't want to capture this as ending
+South_flu_season_dates %<>% filter(! year(flu_season_start) == 2021)
+```
+
+**List of flu season dates**
+
+```{r, echo=F}
+South_flu_season_dates %<>% 
+mutate(last_end = lag(flu_season_end),
+       season_length = flu_season_end - flu_season_start,
+       time_since_last = flu_season_start - last_end)
+
+South_flu_season_dates
+write_csv(South_flu_season_dates, file = here("Data", "South-flu-seasons-1521.csv"))
+```
+
+```{r, echo=F}
+south_plot2 <- ggplot(dat = South_summary, 
+       aes(x = dt3, y = pp2)) + 
+  geom_ribbon(aes(ymin = lb, ymax = ub2), alpha = 0.4) +
+  scale_y_continuous(limits = c(-0.05, 0.65)) + 
+  geom_line(aes(y = p2), col = "#7a0177") + 
+  geom_line(col = "#fd8d3c") + 
+  geom_hline(yintercept = 0.05) + 
+  labs(y = "% positive flu tests", x = "Year") +
+  theme_bw() + labs(title = "South") +
+  geom_vline(data = South_flu_season_dates, aes(xintercept = flu_season_end), col = "red") + 
+  geom_vline(data = South_flu_season_dates, aes(xintercept = flu_season_start), col = "green") +
+  scale_x_date(date_breaks = "years", date_labels = "%y")
+
+south_plot2
+
+ggsave(plot = south_plot2, 
+       filename = here("Plots", "South-seasons-1521_2023-03-10.png"),
+       width = 5, height = 2, device = "png")
+```
+
+```{r}
+write_csv(South_summary, file = here("Data", "South-weekly-smoothed-2.csv"))
+```
+
+```{r west}
+division <- "West"
+```
+
+`r division`
+
+```{r}
+assign(paste0(division, "_summary"), C2 %>% filter(census_division == division))
+
+assign(paste0(division, "_summary2"), P2 %>% filter(census_division == division))
+```
+
+Proportion of the weeks in a calendar year with no tests
+
+```{r}
+get(paste0(division, "_summary")) %>% 
+  group_by(YEAR) %>%
+  summarise(num_weeks = n(),
+            num_weeks_no_tests = sum(no_tests)) %>%
+  mutate(prop_no_tests = round((num_weeks_no_tests/num_weeks)*100, 1))
+```
+
+```{r}
+a <- ggplot(data = get(paste0(division, "_summary")), aes(x = dt3, y = num_test)) + 
+  geom_line() + 
+  labs(y = "Number of tests", x = "Year", 
+       title = paste("Number of clinical tests in ", division, " 2015+")) +
+  theme_bw() + 
+  scale_y_log10() + 
+  scale_x_date(date_breaks = "years", date_labels = "%y") 
+
+b <- ggplot(dat = get(paste0(division, "_summary")), aes(x = dt3, y = pp2)) + 
+  geom_ribbon(aes(ymin = lb, ymax = ub2, fill = "95% CI")) +
+  geom_line(col = "#7a0177") + 
+  geom_hline(yintercept = 0.05) + 
+  labs(y = "Percentage tests that are positive", x = "Year") +
+  theme_bw() + 
+  scale_x_date(date_breaks = "years", date_labels = "%y") + 
+  scale_fill_manual(values = c("#bdbdbd")) +
+  scale_y_continuous(limits = c(0, 0.65))
+
+a + b + plot_layout(nrow = 2)
+```
+
+```{r}
+assign(paste0(division, "_mod0"),
+       glm(num_pos ~ ns(dt3, df = 72), 
+           offset = log(num_test),
+           data = get(paste0(division, "_summary")), family = "poisson")
+)
+
+West_summary$p1 <- predict(West_mod0, type = "response")
+West_summary$p2 <- West_summary$p1/West_summary$num_test
+
+ggplot(dat = get(paste0(division, "_summary")), aes(x = dt3, y = pp2)) + 
+  scale_y_continuous(limits = c(-0.05, 0.65)) + 
+  geom_line(aes(y = p2), lwd = 1, col = "#fd8d3c") + 
+  geom_line(col = "#7a0177") +
+  geom_hline(yintercept = 0.05) +
+  labs(y = "Percentage tests that are positive", x = "Date") +
+  theme_bw() + labs(title = paste0(division, ": Actual vs. smoothed (df = 72)")) +
+  scale_x_date(date_breaks = "years", date_labels = "%y")
+```
+
+**Identify flu season start and end date for West region 1**
+
+```{r, echo = F}
+West_summary %<>% 
+  ungroup() %>% 
+  arrange(dt3) %>%
+  mutate(gte5 = case_when(p2 >= 0.05 ~ 1, 
+                          p2 < 0.05 ~ 0),
+         diff_lag1_pp = gte5 - lag(gte5),
+         diff_lag2_pp = gte5 - lag(gte5, n = 2),
+         runsum = RcppRoll::roll_sum(diff_lag2_pp, 2, align = "right", fill = NA),
+         start_flu_season = case_when(runsum == 2 ~ 1,
+                                      runsum != 2 ~ 0),
+         end_flu_season = case_when(runsum == -2 ~ 1,
+                                    runsum != -2 ~ 0))
+```
+
+```{r, echo = F}
+West_flu_season_start <- West_summary %>% filter(start_flu_season == 1) %>% select(dt3)
+dim(West_flu_season_start) #5
+
+West_flu_season_end <- West_summary %>% filter(end_flu_season == 1) %>% select(dt3)
+dim(West_flu_season_end) #5
+
+West_flu_season_dates <- cbind(West_flu_season_start,
+                                    rbind(West_flu_season_end))
+
+names(West_flu_season_dates) <- c("flu_season_start", "flu_season_end")
+
+#remove the last "season" since don't have the 2022 data so don't want to capture this as ending
+West_flu_season_dates %<>% filter(! year(flu_season_start) == 2021)
+```
+
+**List of flu season dates**
+
+```{r, echo=F}
+West_flu_season_dates %<>% 
+mutate(last_end = lag(flu_season_end),
+       season_length = flu_season_end - flu_season_start,
+       time_since_last = flu_season_start - last_end)
+
+West_flu_season_dates
+write_csv(West_flu_season_dates, file = here("Data", "West-flu-seasons-1521.csv"))
+```
+
+```{r, echo=F}
+west_plot2 <- ggplot(dat = West_summary, 
+       aes(x = dt3, y = pp2)) + 
+  geom_ribbon(aes(ymin = lb, ymax = ub2), alpha = 0.4) +
+  scale_y_continuous(limits = c(-0.05, 0.65)) + 
+  geom_line(aes(y = p2), col = "#7a0177") + 
+  geom_line(col = "#fd8d3c") + 
+  geom_hline(yintercept = 0.05) + 
+  labs(y = "% positive flu tests", x = "Year") +
+  theme_bw() + labs(title = "West") +
+  geom_vline(data = West_flu_season_dates, aes(xintercept = flu_season_end), col = "red") + 
+  geom_vline(data = West_flu_season_dates, aes(xintercept = flu_season_start), col = "green") +
+  scale_x_date(date_breaks = "years", date_labels = "%y")
+
+west_plot2
+
+ggsave(plot = west_plot2, 
+       filename = here("Plots", "West-seasons-1521_2023-03-10.png"),
+       width = 5, height = 2, device = "png")
+```
+
+```{r}
+write_csv(West_summary, file = here("Data", "West-weekly-smoothed-2.csv"))
+```
+
+```{r}
+all_CR_flu_season_dates <- 
+bind_rows(Northeast_flu_season_dates %>% mutate(Census_region = "Northeast", 
+                                           states = paste(ne_states, collapse = ', ')),
+          Midwest_flu_season_dates %>% mutate(Census_region = "Midwest", 
+                                           states = paste(mw_states, collapse = ', ')),
+          South_flu_season_dates %>% mutate(Census_region = "South", 
+                                           states = paste(s_states, collapse = ', ')),
+          West_flu_season_dates %>% mutate(Census_region = "West", 
+                                           states = paste(w_states, collapse = ', ')))
+
+
+write_csv(all_CR_flu_season_dates, file = here("Data", "all_CR-flu-seasons-2015-2021.csv"))  
+
+
+```
+
+The following chunk only runs if have plots loaded into memory from 
+00_1997-2015_Identify-flu-seasons_Census-region.Rmd
+
+```{r}
+all_regions_and_year <- mw_plot + mw_plot2 + 
+  ne_plot + ne_plot2 + 
+  south_plot + south_plot2 + 
+  west_plot + west_plot2 +
+  plot_layout(nrow = 4, ncol = 2, widths = c(3, 1))
+
+ggsave(plot = all_regions_and_year, 
+       filename = here("Plots", "flu-seasons-for-all-regions-and-years.png"),
+       width = 15, height = 10, device = "png", dpi = 300)
+```
+
